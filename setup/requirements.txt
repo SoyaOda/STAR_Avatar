@@ -1,0 +1,24 @@
+# Core dependencies for STAR Avatar System
+torch>=2.0.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# 3D processing
+trimesh>=4.0.0
+open3d>=0.18.0
+
+# For STAR model (if using official implementation)
+# Clone from: https://github.com/ahmedosman/STAR
+# Or we'll implement a minimal version
+
+# Optional: PyTorch3D (requires compilation, can install later)
+# pytorch3d
+
+# Visualization
+matplotlib>=3.7.0
+
+# API server (for later)
+# flask>=3.0.0
+# fastapi>=0.104.0
+# uvicorn>=0.24.0
