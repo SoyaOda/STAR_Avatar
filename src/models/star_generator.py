@@ -4,7 +4,7 @@ Handles 3D body generation with shape parameters
 """
 import torch
 import numpy as np
-from models.star_layer import STARLayer
+from src.models.star_layer import STARLayer
 
 
 class STARGenerator:

@@ -3,7 +3,7 @@ Renderer Component
 Handles photorealistic 2D rendering of 3D bodies
 """
 import numpy as np
-from visualizations.photorealistic_renderer import PhotorealisticRenderer
+from src.rendering.photorealistic_renderer import PhotorealisticRenderer
 
 
 class Renderer:
