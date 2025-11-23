@@ -29,7 +29,7 @@ class STARLayer(nn.Module):
         # Auto-detect model path if not provided
         if model_path is None:
             default_path = os.path.join(
-                os.path.dirname(__file__), '..', 'data', 'star_models',
+                os.path.dirname(__file__), '..', '..', 'data', 'star_models',
                 gender, 'model.npz'
             )
             if os.path.exists(default_path):
