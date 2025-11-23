@@ -40,3 +40,7 @@ data/hdri_backgrounds/*.exr
 # Temporary
 *.tmp
 *.log
+
+# Large data files
+*.zip
+star_1_1/
