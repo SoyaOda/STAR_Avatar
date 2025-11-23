@@ -4,84 +4,39 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual environments
-venv/
 env/
-ENV/
-env.bak/
-venv.bak/
+venv/
+.venv
+
+# Outputs (generated data)
+outputs/
+
+# Data files
+*.npz
+*.pkl
+*.pth
+*.pt
+*.pt2
+*.ckpt
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+
+# OS
 .DS_Store
+Thumbs.db
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Large model files
+data/star_models/
+sapiens_lite_host/
 
-# PyTorch
-*.pth
-*.pt
+# HDRI backgrounds (large files)
+data/hdri_backgrounds/*.hdr
+data/hdri_backgrounds/*.exr
 
-# STAR model files (large binary files)
-data/star_models/*.npz
-data/star_models/**/*.npz
-star_1_1/
-star_1_1.zip
-*.npz
-
-# Generated outputs
-outputs/renders/*.png
-outputs/renders/*.jpg
-outputs/*.obj
-outputs/synthetic_data/
-outputs/test_renders/
-
-# Temporary files
+# Temporary
 *.tmp
-*.bak
 *.log
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Thumbnails
-._*
-
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-
-# Directories potentially created on remote AFP share
-.AppleDB
-.AppleDesktop
-Network Trash Folder
-Temporary Items
-.apdisk

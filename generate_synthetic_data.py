@@ -58,6 +58,10 @@ def generate_synthetic_sample(
     delta_x = np.random.uniform(-0.02, 0.02) * camera_distance
     delta_y = np.random.uniform(-0.02, 0.02) * camera_distance
 
+    # Ground truth global translation (body position in camera coordinates)
+    # T = [Tx, Ty, Tz] where Tz is the camera distance
+    T_gt = np.array([delta_x, delta_y, camera_distance], dtype=np.float32)
+
     # 5. Render front and back views
     # (spec1.md line 159-171)
     print(f"Rendering synthetic data...")
@@ -87,6 +91,7 @@ def generate_synthetic_sample(
     # Compile outputs
     synthetic_data = {
         'beta_gt': betas.numpy(),  # Ground truth shape parameters
+        'T_gt': T_gt,  # Ground truth global translation
         'front': front_outputs,
         'back': back_outputs,
         'camera_distance': camera_distance,
@@ -143,6 +148,9 @@ def generate_synthetic_sample(
         # Save beta parameters
         np.save(os.path.join(save_dir, 'beta_gt.npy'), betas.numpy())
 
+        # Save global translation
+        np.save(os.path.join(save_dir, 'T_gt.npy'), T_gt)
+
         print(f"\n✓ Synthetic data saved to: {save_dir}")
 
     return synthetic_data
@@ -150,6 +158,17 @@ def generate_synthetic_sample(
 
 def main():
     """Generate sample synthetic data"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Generate synthetic training data')
+    parser.add_argument('--num_samples', type=int, default=3,
+                        help='Number of samples to generate (default: 3)')
+    parser.add_argument('--image_size', type=int, default=512,
+                        help='Image size (default: 512)')
+    parser.add_argument('--focal_length', type=float, default=50.0,
+                        help='Focal length in mm (default: 50.0)')
+    args = parser.parse_args()
+
     print("\n" + "="*70)
     print("Synthetic Data Generation (spec1.md)")
     print("="*70)
@@ -161,13 +180,13 @@ def main():
     # Initialize renderer
     print("Initializing PyTorch renderer...")
     renderer = STARRenderer(
-        image_size=512,
-        focal_length=50.0,  # 50mm (spec requirement)
+        image_size=args.image_size,
+        focal_length=args.focal_length,
         device='cpu'
     )
 
     # Generate synthetic samples
-    num_samples = 3
+    num_samples = args.num_samples
     print(f"\nGenerating {num_samples} synthetic samples...\n")
 
     for i in range(num_samples):
@@ -199,6 +218,7 @@ def main():
     print(f"  - back_mask.png: Person segmentation mask (back)")
     print(f"  - back_joints_heatmap.png: Joint position heatmaps (back)")
     print(f"  - beta_gt.npy: Ground truth shape parameters")
+    print(f"  - T_gt.npy: Ground truth global translation")
 
 
 if __name__ == "__main__":
