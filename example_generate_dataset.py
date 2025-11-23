@@ -25,8 +25,8 @@ def main():
     print("\n1. Initializing pipeline...")
     pipeline = MultiViewPipeline(
         image_size=1024,      # High resolution for Sapiens
-        num_betas=10,         # Shape parameters
-        gender='neutral'      # Neutral STAR model
+        num_betas=30,         # Shape parameters (more for greater variation)
+        gender='female'       # Female STAR model
     )
 
     # Generate dataset
@@ -35,7 +35,7 @@ def main():
         output_dir='outputs/component_dataset',
         num_subjects=2,           # Number of different bodies
         views_per_subject=4,      # Multi-view captures (0°, 90°, 180°, 270°)
-        beta_std=1.5,            # Shape variation (1.0-2.0 recommended)
+        beta_std=2.5,            # Shape variation (larger for more diversity)
         studio_index=0           # Studio background (best for Sapiens)
     )
 
