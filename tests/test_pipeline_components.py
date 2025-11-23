@@ -6,8 +6,8 @@ Verify all components work correctly
 import sys
 from pathlib import Path
 
-# Add src to path
-sys.path.append(str(Path(__file__).parent))
+# Add project root to path
+sys.path.append(str(Path(__file__).parent.parent))
 
 from src.models.star_generator import STARGenerator
 from src.rendering.renderer import Renderer, rotate_vertices_y_axis
