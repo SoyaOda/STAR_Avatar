@@ -35,7 +35,7 @@ def main():
         output_dir='outputs/component_dataset',
         num_subjects=2,           # Number of different bodies
         views_per_subject=4,      # Multi-view captures (0°, 90°, 180°, 270°)
-        beta_std=0.5,            # Shape variation
+        beta_std=1.5,            # Shape variation (1.0-2.0 recommended)
         studio_index=0           # Studio background (best for Sapiens)
     )
 
