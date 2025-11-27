@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+
+# Outputs (generated data)
+outputs/
+
+# Data files
+*.npz
+*.pkl
+*.pth
+*.pt
+*.pt2
+*.ckpt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large model files
+data/star_models/
+sapiens_lite_host/
+
+# HDRI backgrounds (large files)
+data/hdri_backgrounds/*.hdr
+data/hdri_backgrounds/*.exr
+
+# Temporary
+*.tmp
+*.log
+
+# Large data files
+*.zip
+star_1_1/
