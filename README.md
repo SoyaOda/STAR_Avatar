@@ -1,10 +1,11 @@
 # STAR Avatar - Multi-View Synthetic Human Data Generator
 
-Multi-view synthetic human body dataset generator using STAR body model with Sapiens integration.
+Multi-view synthetic human body dataset generator using STAR and MHR body models with Sapiens integration.
 
 ## Features
 
 - **STAR Body Model**: Generate diverse 3D human bodies with 30 shape parameters
+- **MHR Body Model**: Meta's high-resolution parametric human model (Apache 2.0 license)
 - **Photorealistic Rendering**: PBR-based rendering with natural skin tones
 - **Multi-View Capture**: Generate images from multiple camera angles (0°, 90°, 180°, 270°)
 - **Studio Background**: HDRI-based studio backgrounds optimized for Sapiens
@@ -145,18 +146,25 @@ studio_bg = bg_manager.load_studio_background(
 ```
 STAR_Avatar/
 ├── src/                          # Core components
-│   ├── models/                   # STAR model & generator
+│   ├── models/                   # STAR & MHR model generators
+│   │   ├── star_layer.py         # STAR model wrapper
+│   │   ├── star_generator.py     # STAR body generator
+│   │   ├── mhr_layer.py          # MHR model wrapper
+│   │   └── mhr_generator.py      # MHR body generator
 │   ├── rendering/                # Photorealistic renderer
 │   ├── background/               # Background management
 │   ├── compositing/              # Image compositing
 │   ├── inference/                # Sapiens wrapper
-│   └── pipeline/                 # Complete pipeline
+│   └── pipeline/                 # Complete pipeline (STAR & MHR support)
 │
 ├── tests/                        # Tests
 │   └── test_pipeline_components.py
 │
 ├── data/                         # Data files
-│   ├── star_models/              # STAR model files
+│   ├── star_models/              # STAR model files (.npz)
+│   ├── mhr_models/               # MHR model files
+│   │   ├── assets/               # Downloaded MHR assets
+│   │   └── mhr_mesh_lod1_fixed.npz  # Generated mesh mapping
 │   └── hdri_backgrounds/         # Studio backgrounds
 │
 ├── example_generate_dataset.py  # Usage example
@@ -308,6 +316,186 @@ These are optimized for Sapiens segmentation (indoor studio lighting).
 **Issue**: STAR model not found
 - **Solution**: Check `data/star_models/[gender]/model.npz` exists
 
+## MHR Model Support
+
+STAR_Avatar now supports **MHR (Momentum Human Rig)** - Meta's parametric human body model.
+
+### MHR vs STAR Comparison
+
+| Feature | STAR | MHR |
+|---------|------|-----|
+| **Vertices** | 6,890 | 18,439 |
+| **Faces** | ~13,000 | 36,874 |
+| **Shape Parameters** | 10-300 (betas) | 45 (identity) |
+| **Pose Parameters** | 72 | 204 |
+| **Facial Expression** | No | 72 parameters |
+| **Gender Models** | male / female / neutral | Unified (gender encoded in identity params) |
+| **License** | Non-commercial only | Apache 2.0 (commercial OK) |
+
+### MHR Setup
+
+1. **Download MHR assets**:
+
+```bash
+cd /path/to/STAR_Avatar/data
+curl -OL https://github.com/facebookresearch/MHR/releases/download/v1.0.0/assets.zip
+mkdir -p mhr_models && unzip -o assets.zip -d mhr_models
+```
+
+2. **Convert FBX to mesh data** (requires assimp):
+
+```bash
+# Install assimp
+brew install assimp  # macOS
+# apt-get install assimp-utils  # Ubuntu
+
+# Convert FBX to OBJ
+cd data/mhr_models/assets
+assimp export lod1.fbx lod1.obj
+```
+
+3. **Generate mesh mapping** (run once):
+
+```bash
+cd /path/to/STAR_Avatar
+python3 -c "
+import torch
+import numpy as np
+import trimesh
+from scipy.spatial import cKDTree
+
+# Load MHR model vertices
+model = torch.jit.load('data/mhr_models/assets/mhr_model.pt', map_location='cpu')
+vertices, _ = model(torch.zeros(1, 45), torch.zeros(1, 204), torch.zeros(1, 72))
+mhr_verts = vertices[0].numpy()
+
+# Load OBJ mesh
+mesh = trimesh.load('data/mhr_models/assets/lod1.obj', force='mesh')
+
+# Map OBJ vertices to MHR vertices
+tree = cKDTree(mhr_verts)
+distances, obj_to_mhr = tree.query(mesh.vertices, k=1)
+
+# Convert faces
+mhr_faces = np.array([[obj_to_mhr[v] for v in face] for face in mesh.faces])
+
+# Save
+np.savez('data/mhr_models/mhr_mesh_lod1_fixed.npz', faces=mhr_faces, vertex_mapping=obj_to_mhr)
+print('Mesh mapping saved!')
+"
+```
+
+### MHR Usage
+
+#### Basic Example
+
+```python
+from src.pipeline.multi_view import MultiViewPipeline
+
+# Initialize with MHR model
+pipeline = MultiViewPipeline(
+    image_size=1024,
+    num_betas=45,      # MHR uses 45 identity parameters
+    model_type='mhr'   # Specify MHR model
+)
+
+# Generate dataset
+pipeline.generate_dataset(
+    output_dir='outputs/mhr_dataset',
+    num_subjects=10,
+    views_per_subject=4,
+    param_std=1.0      # Identity parameter std (0.5-1.5 recommended)
+)
+```
+
+#### Using MHR Generator Directly
+
+```python
+from src.models.mhr_generator import MHRGenerator
+
+# Create generator
+generator = MHRGenerator(num_identity=45)
+
+# Generate random body
+body = generator.generate_body(identity_std=1.0)
+
+print(f"Vertices: {body['vertices'].shape}")  # (18439, 3)
+print(f"Faces: {body['faces'].shape}")        # (36874, 3)
+print(f"Height: {body['height_m']:.2f}m")
+```
+
+#### Custom Identity Parameters
+
+```python
+import numpy as np
+from src.models.mhr_generator import MHRGenerator
+
+generator = MHRGenerator(num_identity=45)
+
+# Custom identity (45 parameters)
+# First 20: body shape, Next 20: head shape, Last 5: hand shape
+custom_identity = np.zeros(45)
+custom_identity[0] = 2.0   # Adjust body shape
+custom_identity[1] = -1.5  # Adjust another body dimension
+
+body = generator.generate_body(identity=custom_identity)
+```
+
+### MHR Identity Parameter Guide
+
+MHR's 45 identity parameters control:
+- **Parameters 0-19**: Body shape (height, weight, proportions, etc.)
+- **Parameters 20-39**: Head shape
+- **Parameters 40-44**: Hand shape
+
+Recommended ranges:
+- `param_std=0.5`: Subtle variations
+- `param_std=0.8`: Moderate variations
+- `param_std=1.0`: Clear diversity (recommended)
+- `param_std=1.5`: Strong variations
+
+### MHR Output Structure
+
+```
+outputs/mhr_dataset/
+├── studio_background.png
+├── summary.json
+└── subject_0000/
+    ├── metadata.json          # Contains identity params, height_m
+    ├── view_00_000deg.png
+    ├── view_01_090deg.png
+    ├── view_02_180deg.png
+    └── view_03_270deg.png
+```
+
+### MHR Metadata Format
+
+```json
+{
+  "subject_idx": 0,
+  "model_type": "mhr",
+  "identity": [0.42, -0.08, ...],
+  "height_m": 1.72,
+  "num_views": 4,
+  "views": [...]
+}
+```
+
+### MHR vs STAR: When to Use Which?
+
+| Use Case | Recommended Model |
+|----------|-------------------|
+| Commercial projects | **MHR** (Apache 2.0 license) |
+| Higher mesh detail | **MHR** (18K vertices vs 7K) |
+| Gender-specific models | **STAR** (separate male/female/neutral) |
+| Smaller file size | **STAR** |
+| Academic research | Either (both are well-documented) |
+
+### MHR References
+
+- [MHR GitHub Repository](https://github.com/facebookresearch/MHR)
+- [MHR Paper (arXiv)](https://arxiv.org/abs/2511.15586)
+
 ## License
 
 See individual component licenses.
@@ -321,5 +509,15 @@ If using STAR model:
   author = {Osman, Ahmed A A and Bolkart, Timo and Black, Michael J.},
   booktitle = {European Conference on Computer Vision (ECCV)},
   year = {2020}
+}
+```
+
+If using MHR model:
+```
+@article{MHR:2024,
+  title = {{MHR}: Momentum Human Rig},
+  author = {Meta Research},
+  journal = {arXiv preprint arXiv:2511.15586},
+  year = {2024}
 }
 ```
