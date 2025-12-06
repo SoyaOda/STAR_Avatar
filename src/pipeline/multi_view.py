@@ -2,6 +2,10 @@
 Multi-View Pipeline Component
 Complete pipeline for generating multi-view synthetic data with Sapiens processing
 Supports both STAR and MHR body models
+
+Camera presets:
+- HMR standard (5000px focal length, square images)
+- iPhone presets (1080p, 4K, photo modes)
 """
 import numpy as np
 import os
@@ -14,6 +18,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.rendering.renderer import Renderer, rotate_vertices_y_axis
+from src.rendering.camera import IPHONE_PRESETS
 from src.background.manager import BackgroundManager
 from src.compositing.compositor import Compositor
 from src.inference.sapiens import SapiensInference
@@ -32,26 +37,33 @@ class MultiViewPipeline:
     Supports two body models:
     - STAR: Sparse Trained Articulated Human Body Regressor
     - MHR: Momentum Human Rig (Meta's parametric human model)
+
+    Supports camera presets:
+    - HMR standard (default)
+    - iPhone 1080p, 4K, photo modes
     """
 
     SUPPORTED_MODELS = ['star', 'mhr']
+    SUPPORTED_CAMERA_PRESETS = ['hmr'] + list(IPHONE_PRESETS.keys())
 
     def __init__(
         self,
         image_size=1024,
         num_betas=10,
         gender='neutral',
-        model_type='star'
+        model_type='star',
+        camera_preset=None
     ):
         """
         Initialize pipeline components
 
         Args:
-            image_size: Output image resolution
+            image_size: Output image resolution (for HMR mode)
             num_betas: Number of shape parameters (STAR: betas, MHR: identity)
             gender: STAR model gender ('neutral', 'male', 'female')
                    (ignored for MHR which is gender-neutral)
             model_type: Body model type ('star' or 'mhr')
+            camera_preset: Camera preset ('iphone_1080p', 'iphone_4k', 'iphone_photo_12mp', None for HMR)
         """
         print("\n" + "="*70)
         print("Initializing Multi-View Pipeline")
@@ -60,6 +72,8 @@ class MultiViewPipeline:
         self.model_type = model_type.lower()
         if self.model_type not in self.SUPPORTED_MODELS:
             raise ValueError(f"model_type must be one of {self.SUPPORTED_MODELS}")
+
+        self.camera_preset = camera_preset
 
         # Initialize body generator based on model type
         if self.model_type == 'star':
@@ -72,7 +86,15 @@ class MultiViewPipeline:
             self.param_name = 'identity'
 
         # Initialize rendering components
-        self.renderer = Renderer(image_size=image_size)
+        if camera_preset is not None and camera_preset in IPHONE_PRESETS:
+            self.renderer = Renderer(camera_preset=camera_preset)
+            self.image_width = self.renderer.image_width
+            self.image_height = self.renderer.image_height
+        else:
+            self.renderer = Renderer(image_width=image_size)
+            self.image_width = image_size
+            self.image_height = image_size
+
         self.background_manager = BackgroundManager()
         self.compositor = Compositor()
 
@@ -98,7 +120,7 @@ class MultiViewPipeline:
         background = self.background_manager.load_studio_background(
             index=studio_index,
             direction=direction,
-            output_size=(self.renderer.image_size, self.renderer.image_size)
+            output_size=(self.image_width, self.image_height)
         )
 
         self.compositor.set_background(background)
@@ -204,18 +226,17 @@ class MultiViewPipeline:
         for cam_pos in camera_positions:
             view_idx = cam_pos['view_index']
             azimuth = cam_pos['azimuth']
+            distance = cam_pos['distance']
 
             print(f"\n   View {view_idx+1}/{len(camera_positions)}: {azimuth:.1f}°")
 
-            # Rotate body for this view
-            rotated_vertices = rotate_vertices_y_axis(vertices, azimuth)
-
-            # Render with alpha
-            person_rgba = self.renderer.render_with_alpha(
-                vertices=rotated_vertices,
+            # Render with azimuth and get camera params (SAM 3D Body format)
+            person_rgba, camera_params = self.renderer.render_with_azimuth(
+                vertices=vertices,
                 faces=faces,
-                camera_distance=cam_pos['distance'],
-                view='front'
+                camera_distance=distance,
+                azimuth=azimuth,
+                return_camera_params=True
             )
 
             # Composite with background
@@ -230,24 +251,41 @@ class MultiViewPipeline:
 
             print(f"     ✓ Saved: {img_filename}")
 
+            # Store view info with SAM 3D Body compatible camera params
             images_info.append({
                 'view_index': view_idx,
                 'filename': img_filename,
-                'azimuth': azimuth
+                'azimuth': azimuth,
+                'camera': camera_params
             })
 
-        # 3. Save metadata
+        # 3. Save metadata (SAM 3D Body compatible format)
         metadata = {
             'subject_idx': subject_idx,
             'model_type': self.model_type,
-            self.param_name: params.tolist(),
             'num_views': len(camera_positions),
             'views': images_info
         }
 
-        # Add MHR-specific metadata
-        if self.model_type == 'mhr' and 'height_m' in body:
-            metadata['height_m'] = float(body['height_m'])
+        # Add model-specific parameters in SAM 3D Body format
+        if self.model_type == 'mhr':
+            # MHR parameters (45 identity, 204 pose, 72 expression)
+            metadata['mhr_params'] = {
+                'identity': params.tolist(),  # 45 parameters
+                'pose': body.get('pose', [0.0] * 204) if isinstance(body.get('pose'), list) else (body['pose'].tolist() if body.get('pose') is not None else [0.0] * 204),
+                'expression': body.get('expression', [0.0] * 72) if isinstance(body.get('expression'), list) else (body['expression'].tolist() if body.get('expression') is not None else [0.0] * 72),
+            }
+            if 'height_m' in body:
+                metadata['mhr_params']['height_m'] = float(body['height_m'])
+        else:
+            # STAR parameters (betas)
+            metadata['star_params'] = {
+                'betas': params.tolist(),
+                'pose': [0.0] * 72  # T-pose
+            }
+
+        # Legacy compatibility
+        metadata[self.param_name] = params.tolist()
 
         metadata_path = subject_dir / 'metadata.json'
         with open(metadata_path, 'w') as f:
@@ -297,8 +335,23 @@ class MultiViewPipeline:
         print(f"\n✓ Saved background: {bg_path}")
 
         # Generate camera positions
-        # MHR needs larger distance due to different scale
-        camera_distance = 4.0 if self.model_type == 'mhr' else 3.0
+        # Calculate camera distance based on focal length and image size
+        # To fit a ~1.7m tall human in ~70% of the image height
+        # distance = (height * focal_length) / (image_height * display_ratio)
+
+        if self.camera_preset is not None and self.camera_preset in IPHONE_PRESETS:
+            # iPhone camera: wider FOV, shorter distance
+            # iPhone focal length ~1500px at 1080p, FOV ~69°
+            # distance = (1.7 * 1500) / (1080 * 0.7) ≈ 3.4m
+            camera_distance = 3.5 if self.model_type == 'mhr' else 3.2
+        else:
+            # HMR standard: 5000px focal length
+            # distance = (1.7 * 5000) / (1024 * 0.7) ≈ 11.9m
+            if self.model_type == 'mhr':
+                camera_distance = 12.0
+            else:
+                camera_distance = 11.5
+
         camera_positions = self.generate_camera_positions(
             num_views=views_per_subject,
             distance=camera_distance
@@ -319,13 +372,29 @@ class MultiViewPipeline:
 
             subjects_metadata.append(metadata)
 
-        # Save dataset summary
+        # Save dataset summary (SAM 3D Body compatible format)
+        # Get camera info from first subject's first view for global params
+        first_cam = camera_positions[0]
+        global_camera_info = self.renderer.get_camera_params(
+            camera_distance=first_cam['distance'],
+            azimuth=0.0
+        )
+
         summary = {
             'model_type': self.model_type,
             'total_subjects': num_subjects,
             'views_per_subject': views_per_subject,
             'total_images': num_subjects * views_per_subject,
             'studio_background': str(bg_path),
+            # Global camera parameters (SAM 3D Body / HMR format)
+            'camera_config': {
+                'preset': self.camera_preset or 'hmr_standard',
+                'focal_length': global_camera_info['focal_length'],
+                'image_width': global_camera_info['image_width'],
+                'image_height': global_camera_info['image_height'],
+                'camera_distance': global_camera_info['camera_distance'],
+                'intrinsics': global_camera_info['intrinsics'],
+            },
             'subjects': subjects_metadata
         }
 

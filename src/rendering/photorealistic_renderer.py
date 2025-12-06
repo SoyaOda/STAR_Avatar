@@ -1,8 +1,12 @@
 """
-Photorealistic RGB Renderer for STAR Body Meshes
+Photorealistic RGB Renderer for STAR/MHR Body Meshes
 
 Uses pyrender with PBR (Physically-Based Rendering) for photo-like outputs.
 This renderer is optimized for generating realistic RGB images similar to photographs.
+
+Camera parameters are compatible with SAM 3D Body / HMR format:
+- Weak perspective: scale, tx, ty
+- Full perspective: intrinsic matrix K, extrinsic matrix [R|t]
 """
 
 import numpy as np
@@ -11,6 +15,8 @@ import trimesh
 from PIL import Image
 import os
 
+from src.rendering.camera import CameraParams, create_sam3db_camera
+
 
 class PhotorealisticRenderer:
     """
@@ -18,29 +24,61 @@ class PhotorealisticRenderer:
 
     Produces high-quality RGB images that look like real photographs.
     Uses 3-point lighting setup and smooth shading for realistic appearance.
+
+    Camera parameters follow SAM 3D Body / HMR conventions:
+    - Default focal length: 5000 pixels (HMR standard)
+    - Weak perspective output: scale = f / z
     """
 
-    def __init__(self, image_size=512, focal_length=50.0, sensor_width=36.0):
+    # HMR standard focal length (pixels)
+    HMR_FOCAL_LENGTH = 5000.0
+
+    def __init__(self, image_width=512, image_height=None, focal_length_pixels=None,
+                 use_hmr_camera=True, camera_preset=None):
         """
-        Initialize photorealistic renderer.
+        Initialize photorealistic renderer with SAM 3D Body compatible camera.
 
         Args:
-            image_size: Output image resolution (width and height in pixels)
-            focal_length: Camera focal length in mm (default: 50mm standard lens)
-            sensor_width: Camera sensor width in mm (default: 36mm full-frame)
+            image_width: Output image width in pixels
+            image_height: Output image height in pixels (defaults to image_width for square)
+            focal_length_pixels: Focal length in pixels (default: 5000 for HMR standard)
+            use_hmr_camera: If True, use HMR standard focal length (5000 pixels)
+            camera_preset: Camera preset name ('iphone_1080p', 'iphone_4k', etc.)
         """
-        self.image_size = image_size
-        self.focal_length = focal_length
-        self.sensor_width = sensor_width
+        # Handle iPhone presets
+        if camera_preset is not None:
+            from src.rendering.camera import IPHONE_PRESETS
+            if camera_preset in IPHONE_PRESETS:
+                p = IPHONE_PRESETS[camera_preset]
+                image_width = p['width']
+                image_height = p['height']
+                focal_length_pixels = p['fx']
+                use_hmr_camera = False
 
-        # Calculate focal length in pixels
-        self.fx = (focal_length / sensor_width) * image_size
-        self.fy = self.fx
-        self.cx = image_size / 2.0
-        self.cy = image_size / 2.0
+        self.image_width = image_width
+        self.image_height = image_height if image_height is not None else image_width
+        self.image_size = self.image_width  # For backward compatibility
+
+        # Use HMR standard focal length by default
+        if focal_length_pixels is None:
+            if use_hmr_camera:
+                focal_length_pixels = self.HMR_FOCAL_LENGTH
+            else:
+                # Legacy: 50mm on 36mm sensor
+                focal_length_pixels = (50.0 / 36.0) * image_width
+
+        self.focal_length_pixels = focal_length_pixels
+        self.fx = focal_length_pixels
+        self.fy = focal_length_pixels
+        self.cx = self.image_width / 2.0
+        self.cy = self.image_height / 2.0
 
         # Create pyrender renderer (offscreen for server/headless environments)
-        self.renderer = pyrender.OffscreenRenderer(image_size, image_size)
+        self.renderer = pyrender.OffscreenRenderer(self.image_width, self.image_height)
+
+        # Camera params helper (will be set per-render with distance)
+        self._camera_params = None
+        self.camera_preset = camera_preset
 
     def create_mesh(self, vertices, faces, color=None):
         """
@@ -84,14 +122,14 @@ class PhotorealisticRenderer:
 
         return mesh
 
-    def setup_camera(self, distance=3.0, view='front', look_at_y=-0.4):
+    def setup_camera(self, distance=3.0, view='front', look_at_y=0.1):
         """
         Setup camera position and orientation.
 
         Args:
             distance: Camera distance from origin in meters
             view: Camera view ('front', 'back', 'side'/'right', 'left')
-            look_at_y: Y-coordinate of the point camera looks at (negative to see feet)
+            look_at_y: Y-coordinate of the point camera looks at (negative moves person down in image)
 
         Returns:
             camera: pyrender.Camera object
@@ -203,8 +241,29 @@ class PhotorealisticRenderer:
         sun_pose[:3, :3] = Rx
         scene.add(sun, pose=sun_pose)
 
+    def get_camera_params(self, camera_distance: float, azimuth: float = 0.0) -> dict:
+        """
+        Get SAM 3D Body / HMR compatible camera parameters
+
+        Args:
+            camera_distance: Distance from camera to subject in meters
+            azimuth: View angle in degrees (0 = front)
+
+        Returns:
+            dict with camera parameters in SAM 3D Body format
+        """
+        camera_params = CameraParams(
+            focal_length_pixels=self.focal_length_pixels,
+            image_width=self.image_width,
+            image_height=self.image_height,
+            camera_distance=camera_distance,
+            principal_point=(self.cx, self.cy)
+        )
+
+        return camera_params.get_full_camera_dict(azimuth=azimuth, elevation=0.0)
+
     def render(self, vertices, faces, camera_distance=3.0, view='front',
-               mesh_color=None, background_color=None):
+               mesh_color=None, background_color=None, return_camera_params=False):
         """
         Render photorealistic RGB image.
 
@@ -215,9 +274,11 @@ class PhotorealisticRenderer:
             view: Camera view ('front', 'back', 'side', 'left')
             mesh_color: Mesh color [R, G, B, A] (default: skin tone)
             background_color: Background color [R, G, B, A] (default: white)
+            return_camera_params: If True, also return camera parameters
 
         Returns:
             RGB image as numpy array [H, W, 3] with values in [0, 255]
+            If return_camera_params=True: (image, camera_params_dict)
         """
         # Create scene with low ambient light to prevent overexposure
         scene = pyrender.Scene(ambient_light=[0.05, 0.05, 0.05], bg_color=background_color or [0.8, 0.8, 0.8, 1.0])
@@ -235,6 +296,19 @@ class PhotorealisticRenderer:
 
         # Render
         color, depth = self.renderer.render(scene)
+
+        if return_camera_params:
+            # Convert view to azimuth for camera params
+            view_to_azimuth = {
+                'front': 0.0,
+                'right': 90.0,
+                'side': 90.0,
+                'back': 180.0,
+                'left': 270.0
+            }
+            azimuth = view_to_azimuth.get(view, 0.0)
+            camera_params = self.get_camera_params(camera_distance, azimuth)
+            return color, camera_params
 
         return color
 
